@@ -9,3 +9,5 @@ __pycache__/
 *.bin
 *.map
 *.log
+instructor_commands.txt
+main/rsa_refans.c

@@ -1,0 +1,691 @@
+ESP32 RSA OPTIMIZATION ASSIGNMENT GUIDE
+=======================================
+
+Purpose
+-------
+
+This document explains the background knowledge needed for the ESP32 RSA
+optimization assignment. The assignment is designed for students who are
+learning embedded systems, modular arithmetic, performance measurement, and
+code optimization.
+
+The goal is not to build production-grade cryptography. The goal is to give
+students a small, testable RSA-like workload that can run on ESP32 hardware,
+inside Docker, or in a QEMU/mock environment. Students begin with a correct
+but intentionally simple implementation, then improve it while preserving
+correctness.
+
+
+1. What RSA Encryption Computes
+-------------------------------
+
+RSA encryption is based on modular exponentiation:
+
+    ciphertext = plaintext^e mod n
+
+Where:
+
+    plaintext   is the input message represented as an integer
+    e           is the public exponent
+    n           is the RSA modulus
+    ciphertext  is the encrypted output
+
+In real RSA, n is usually a very large integer, often 2048 bits or more. In
+this assignment, the starter code uses 64-bit toy values. These are much too
+small for real security, but they are useful for teaching optimization because
+they are simple enough to run and understand on a small embedded target.
+
+Example:
+
+    plaintext = 65
+    e = 17
+    n = 3233
+
+The expected result is:
+
+    65^17 mod 3233 = 2790
+
+The program checks values like this to make sure an optimized implementation
+still performs the correct mathematical operation.
+
+
+2. Why Toy RSA Values Are Used
+------------------------------
+
+Real RSA requires big integer arithmetic. A real 2048-bit RSA modulus cannot
+fit inside C's uint64_t type. Supporting real RSA would require a multi-
+precision arithmetic library or a large amount of extra code.
+
+This assignment uses toy 64-bit values because they make the optimization
+problem small and focused.
+
+Toy values are useful for:
+
+    1. Fast classroom testing
+    2. Simple correctness checks
+    3. Easy QEMU or CI execution
+    4. Avoiding large cryptographic dependencies
+    5. Letting students focus on modular exponentiation
+
+Toy values are not useful for:
+
+    1. Measuring real-world RSA performance
+    2. Evaluating cryptographic security
+    3. Comparing against production crypto libraries
+    4. Making claims about 2048-bit or 4096-bit RSA
+
+A good way to describe the benchmark is:
+
+    This benchmark measures speedup for a toy 64-bit RSA workload. It is
+    intended for comparing student implementations in this course, not for
+    evaluating production RSA performance.
+
+
+3. Modular Arithmetic
+---------------------
+
+The operation "mod" means remainder after division.
+
+Examples:
+
+    10 mod 3 = 1
+    20 mod 7 = 6
+    3233 mod 17 = 3
+
+RSA repeatedly uses modular multiplication:
+
+    (a * b) mod n
+
+The direct expression a * b can overflow if a and b are large. The starter
+implementation avoids this by using repeated doubling and addition:
+
+    result = 0
+    while b > 0:
+        if b is odd:
+            result = (result + a) mod n
+        a = (a + a) mod n
+        b = b / 2
+
+This method is correct but slow. It gives students an obvious optimization
+target.
+
+
+4. Modular Exponentiation
+-------------------------
+
+Computing plaintext^e directly is usually impossible because the intermediate
+number grows extremely quickly.
+
+Instead, RSA uses modular exponentiation. The starter code uses the standard
+"square-and-multiply" method:
+
+    result = 1
+    base = plaintext mod n
+
+    while e > 0:
+        if e is odd:
+            result = result * base mod n
+        base = base * base mod n
+        e = e / 2
+
+    return result
+
+This is much faster than multiplying plaintext by itself e times. Its runtime
+depends on the number of bits in e and the number of 1 bits in e.
+
+For example, e = 65537 is common in real RSA. In binary it has only two set
+bits:
+
+    65537 = 10000000000000001b
+
+That makes it efficient for encryption.
+
+
+5. ESP32 Background
+-------------------
+
+ESP32 is a low-cost microcontroller commonly used for embedded systems,
+Internet of Things devices, sensors, and wireless applications. It has much
+less CPU power and memory than a desktop computer, so optimization matters.
+
+Relevant ESP32 characteristics:
+
+    1. Limited RAM compared with desktop systems
+    2. Lower clock speed than modern CPUs
+    3. Integer operations are much cheaper than floating-point operations
+    4. Division and modulo can be expensive
+    5. Logging through serial output is slow
+    6. Stack usage matters
+    7. Hardware timing can differ from QEMU timing
+
+The assignment uses ESP-IDF, Espressif's official development framework for
+ESP32. ESP-IDF provides the build system, device support, timers, logging, and
+tools for flashing real hardware.
+
+
+6. ESP-IDF Build Flow
+---------------------
+
+The usual ESP-IDF workflow is:
+
+    idf.py set-target esp32
+    idf.py build
+    idf.py flash monitor
+
+For this assignment, students can also use Docker:
+
+    docker build -t esp32-rsa-lab .
+    docker run --rm -it -v "$PWD:/work" esp32-rsa-lab idf.py build
+
+On Windows PowerShell:
+
+    docker run --rm -it -v "${PWD}:/work" esp32-rsa-lab idf.py build
+
+Docker helps make the environment reproducible. Every student can use the
+same ESP-IDF version without installing it manually.
+
+
+7. QEMU and Mock Testing
+------------------------
+
+QEMU is an emulator. It can run software intended for another target, such as
+an ESP32-like environment, on a desktop computer.
+
+In this assignment, QEMU is used as a mock environment. It helps students test
+without physical ESP32 hardware.
+
+Important limitation:
+
+    QEMU timing is not the same as real ESP32 timing.
+
+QEMU is useful for:
+
+    1. Checking that firmware starts
+    2. Running basic correctness tests
+    3. Catching build problems
+    4. Giving a rough benchmark signal
+
+QEMU is less useful for:
+
+    1. Exact cycle counts
+    2. Hardware-specific performance claims
+    3. Serial, flash, and peripheral timing accuracy
+
+If QEMU is not available, the repository includes a host-side checker:
+
+    python tools/score_host.py
+
+This script uses the same toy vectors and benchmark structure. It is not a
+replacement for ESP32 timing, but it is useful for quick correctness testing.
+
+
+8. Correctness Testing
+----------------------
+
+Before optimizing, students must prove that the original code passes all tests.
+After every optimization, they should run the tests again.
+
+Correctness means:
+
+    1. The ciphertext equals the expected value
+    2. Results are deterministic
+    3. Edge cases still work
+    4. The public function signature stays unchanged
+
+The important public functions are:
+
+    uint64_t rsa_encrypt_u64_baseline(uint64_t plaintext,
+                                      uint64_t exponent,
+                                      uint64_t modulus);
+
+    uint64_t rsa_encrypt_u64_student(uint64_t plaintext,
+                                     uint64_t exponent,
+                                     uint64_t modulus);
+
+    int rsa_encrypt_u64_hw(uint64_t plaintext,
+                           uint64_t exponent,
+                           uint64_t modulus,
+                           uint64_t *ciphertext);
+
+Students should optimize rsa_encrypt_u64_student() in main/rsa_student.c. They
+should not change rsa_encrypt_u64_baseline() or the test vectors. Keeping the
+same APIs makes grading and automated testing easier.
+
+Instructors may keep a private optimized reference answer in main/rsa_refans.c.
+That file is intentionally ignored by git and should not be distributed to
+students.
+
+
+9. Benchmarking
+---------------
+
+Benchmarking means measuring how long code takes to run.
+
+A weak benchmark measures too much:
+
+    start timer
+    print lots of text
+    call function once
+    stop timer
+
+This is weak because printing is slow and one function call may be too noisy.
+
+A better benchmark:
+
+    1. Runs many iterations
+    2. Avoids printing inside the timed loop
+    3. Uses a checksum so the compiler cannot delete the work
+    4. Runs multiple samples
+    5. Reports median time, not only one run
+
+The assignment benchmark repeats RSA encryption many times and prints a
+checksum. The checksum helps show that the loop really ran.
+
+Students should report:
+
+    1. Baseline time
+    2. Optimized time
+    3. Percentage speedup
+    4. Test environment
+    5. Whether correctness still passes
+
+Speedup formula:
+
+    speedup_percent = ((baseline_time - optimized_time) / baseline_time) * 100
+
+Example:
+
+    baseline_time = 100 ms
+    optimized_time = 70 ms
+
+    speedup = ((100 - 70) / 100) * 100 = 30%
+
+
+10. Optimization Ideas
+----------------------
+
+Students should optimize in steps. A good workflow is:
+
+    1. Measure baseline
+    2. Make one change in main/rsa_student.c or a documented helper
+    3. Run correctness tests
+    4. Measure again
+    5. Keep the change only if it helps
+
+Possible optimizations, from easier to harder:
+
+    1. Remove unnecessary modulo operations
+    2. Avoid repeated work inside loops
+    3. Reduce branches
+    4. Use faster modular multiplication
+    5. Use compiler optimization flags carefully
+    6. Precompute values when the modulus and exponent are reused
+    7. Use fixed-window exponentiation
+    8. Use Montgomery multiplication
+    9. Use ESP32-specific cycle counters
+    10. Consider constant-time behavior
+
+
+11. Modular Multiplication Optimization
+---------------------------------------
+
+The starter modular multiplication avoids overflow but is slow:
+
+    result = (result + a) mod modulus
+    a = (a + a) mod modulus
+
+This uses modulo many times. Modulo can be expensive on microcontrollers.
+
+Optimization possibilities:
+
+    1. Use wider arithmetic if available
+    2. Reduce modulo operations
+    3. Use conditional subtraction instead of modulo
+    4. Use Montgomery multiplication
+
+Example idea:
+
+    Instead of:
+
+        x = (x + y) % n
+
+    Sometimes use:
+
+        x = x + y
+        if x >= n:
+            x = x - n
+
+This can be faster, but it must be implemented carefully to avoid overflow.
+
+
+12. Montgomery Multiplication
+-----------------------------
+
+Montgomery multiplication is an advanced technique for computing modular
+multiplication efficiently. It replaces division by the modulus with shifts
+and multiplications using a special representation.
+
+Instead of representing a number x normally, Montgomery arithmetic represents:
+
+    x_bar = x * R mod n
+
+Where R is usually a power of two.
+
+Montgomery multiplication can compute:
+
+    x_bar * y_bar * R^-1 mod n
+
+This keeps values in Montgomery form and avoids expensive division by n.
+
+Why it may help:
+
+    1. RSA performs many modular multiplications
+    2. Division and modulo are expensive
+    3. Powers of two are efficient on binary hardware
+
+Why it is harder:
+
+    1. More setup code
+    2. More mathematical assumptions
+    3. Easy to get wrong
+    4. Requires careful testing
+
+This is a good advanced optimization topic, not the first thing students
+should attempt.
+
+
+13. Fixed-Window Exponentiation
+-------------------------------
+
+The basic square-and-multiply method processes one exponent bit at a time.
+Fixed-window exponentiation processes several bits at a time.
+
+For example, a 4-bit window uses chunks from 0 to 15. The implementation can
+precompute:
+
+    base^1 mod n
+    base^2 mod n
+    base^3 mod n
+    ...
+    base^15 mod n
+
+Then it uses those precomputed values during exponentiation.
+
+Advantages:
+
+    1. Fewer multiplications for large exponents
+    2. Good for repeated operations with similar sizes
+
+Disadvantages:
+
+    1. Uses more memory
+    2. More complex code
+    3. Small toy exponents may not benefit much
+
+This is a good example of a speed-memory tradeoff.
+
+
+14. Compiler Optimization
+-------------------------
+
+Compilers can optimize code automatically. Common optimization levels include:
+
+    -O0    no optimization, easier debugging
+    -O1    light optimization
+    -O2    common production optimization
+    -O3    more aggressive optimization
+    -Os    optimize for size
+
+Students may experiment with compiler flags, but they should explain what they
+changed and measure the effect.
+
+Important:
+
+    Compiler flags alone should not replace algorithmic thinking. A strong
+    submission explains both the code-level changes and the measured result.
+
+
+15. Embedded Measurement Problems
+---------------------------------
+
+Embedded benchmarking has traps.
+
+Common mistakes:
+
+    1. Measuring serial print time
+    2. Measuring setup instead of computation
+    3. Running too few iterations
+    4. Comparing QEMU timing with hardware timing directly
+    5. Ignoring compiler optimization level
+    6. Ignoring CPU frequency
+    7. Forgetting that debug builds may be slower
+
+Better practice:
+
+    1. Warm up once before timing
+    2. Time only the encryption loop
+    3. Use enough rounds to reduce noise
+    4. Print after timing is finished
+    5. Report environment details
+    6. Repeat the benchmark several times
+
+
+16. Security Considerations
+---------------------------
+
+This assignment is not production cryptography, but security awareness still
+matters.
+
+Real cryptographic code should consider:
+
+    1. Timing side channels
+    2. Power analysis
+    3. Fault injection
+    4. Memory safety
+    5. Correct padding schemes
+    6. Constant-time operations
+    7. Real key sizes
+    8. Well-reviewed libraries
+
+The starter code does not implement RSA padding. Real RSA encryption should
+not directly encrypt raw messages with m^e mod n. Production systems use
+schemes such as OAEP.
+
+For this assignment, students may discuss constant-time tradeoffs. A branchless
+or constant-time implementation may be more secure but not always faster.
+
+
+17. Why Students Should Not Only Optimize for the Public Tests
+-------------------------------------------------------------
+
+The public test vectors are visible so students can debug. But if students
+hard-code answers or optimize only for those exact values, they are not solving
+the real problem.
+
+Instructors may add hidden tests:
+
+    1. More plaintext values
+    2. Different exponents
+    3. Different moduli
+    4. Edge cases
+    5. Random deterministic workloads
+
+A correct implementation should compute RSA for valid inputs, not only return
+answers for known examples.
+
+
+18. Suggested Hidden Test Strategy
+----------------------------------
+
+For stronger grading, instructors can use:
+
+    1. Fixed public vectors for basic correctness
+    2. Deterministic pseudo-random vectors for hidden correctness
+    3. A fixed benchmark seed for performance
+    4. Several modulus sizes within uint64_t
+    5. Several exponent patterns
+
+Example exponent patterns:
+
+    e = 3
+    e = 17
+    e = 65537
+    e = 0xFFFFFFFF
+    e = random odd values
+
+Example modulus categories:
+
+    small modulus
+    medium modulus
+    large 32-bit modulus
+    larger 63-bit odd modulus
+
+This makes the grading harder to game while keeping the assignment simple.
+
+
+19. Scoring Rubric
+------------------
+
+The assignment uses a 100-point rubric.
+
+1. Build and Run, 10 points
+
+    4 pts: project builds with ESP-IDF
+    3 pts: Docker build works
+    3 pts: QEMU or host mock run produces benchmark output
+
+2. Correctness, 20 points
+
+    10 pts: all public test vectors pass
+    5 pts: repeated runs are deterministic
+    5 pts: implementation handles edge cases such as plaintext >= n, e = 1,
+           and small moduli
+
+3. Code Quality, 15 points
+
+    5 pts: code is readable and maintainable
+    5 pts: changes are well localized
+    3 pts: no unnecessary global state
+    2 pts: comments explain non-obvious math or ESP32-specific behavior
+
+4. Basic Performance Improvement, 15 points
+
+    5 pts: student measures the baseline before changing student code
+    5 pts: student implementation is at least 15% faster than baseline
+    5 pts: benchmark result is reproducible across multiple runs
+
+5. Advanced Performance Improvement, 15 points
+
+    5 pts: student implementation is at least 30% faster than baseline
+    5 pts: student code reduces expensive division or modulo operations
+    5 pts: student explains the chosen optimization strategy with evidence
+
+6. Embedded Awareness, 10 points
+
+    4 pts: stack and heap usage are considered
+    3 pts: solution works in QEMU or on real ESP32 hardware
+    3 pts: timing excludes logging and setup overhead where possible
+
+7. Security and Robustness, 10 points
+
+    4 pts: avoids overflow-related undefined behavior
+    3 pts: considers timing side channels or constant-time tradeoffs
+    3 pts: validates assumptions about input ranges
+
+8. Report and Reproducibility, 5 points
+
+    3 pts: report includes commands, environment, and measured results
+    2 pts: report compares baseline, student, and hardware versions clearly
+
+
+20. Recommended Student Report Format
+-------------------------------------
+
+Students should submit a short report with:
+
+    1. Name and environment
+    2. Baseline benchmark result
+    3. Optimization description
+    4. Optimized benchmark result
+    5. Speedup percentage
+    6. Correctness test output
+    7. Any tradeoffs or limitations
+
+Example table:
+
+    Version      Median Time      Correctness      Notes
+    ---------    ------------     ------------     ----------------
+    Baseline     100 ms           PASS             starter code
+    Optimized    68 ms            PASS             fewer modulo ops
+
+Example speedup:
+
+    ((100 - 68) / 100) * 100 = 32% speedup
+
+
+21. Recommended Student Workflow
+--------------------------------
+
+Step 1: Build the starter project.
+
+    idf.py set-target esp32
+    idf.py build
+
+Step 2: Run the host checker.
+
+    python tools/score_host.py
+
+Step 3: Record baseline results.
+
+Step 4: Change only a small part of main/rsa_student.c.
+
+Step 5: Run correctness tests again.
+
+Step 6: Run the benchmark again.
+
+Step 7: Repeat until the implementation is faster and still correct.
+
+Step 8: Write the report.
+
+
+22. Instructor Notes
+--------------------
+
+This assignment works best when the instructor emphasizes that correctness is
+more important than speed. An incorrect fast implementation should receive low
+performance credit because it is not computing RSA correctly.
+
+Recommended instructor policy:
+
+    1. Correctness must pass before performance points are awarded.
+    2. Students must report baseline measurements.
+    3. Students should not modify test vectors.
+    4. Students should not modify main/rsa_baseline.c.
+    5. Students should explain their optimization.
+    6. Hidden tests should be used if possible.
+
+For a longer or more advanced assignment, instructors can extend the project
+to multi-precision integers, real RSA key sizes, or comparison with mbedTLS.
+
+
+23. Summary
+-----------
+
+This project teaches:
+
+    1. RSA modular exponentiation
+    2. Embedded C implementation
+    3. ESP32 build and test workflow
+    4. Docker-based reproducibility
+    5. QEMU/mock testing
+    6. Correctness-first optimization
+    7. Benchmark design
+    8. Performance/security tradeoffs
+
+The most important lesson is that optimization is an engineering process:
+
+    Measure first.
+    Change one thing.
+    Test correctness.
+    Measure again.
+    Explain the result.

@@ -1,0 +1,15 @@
+#include "rsa_baseline.h"
+
+/*
+ * Instructor-only optimized reference answer template.
+ *
+ * To use privately:
+ *   1. Copy this file to main/rsa_refans.c.
+ *   2. Implement rsa_encrypt_u64_refans().
+ *   3. Keep main/rsa_refans.c uncommitted; it is ignored by .gitignore.
+ */
+
+uint64_t rsa_encrypt_u64_refans(uint64_t plaintext, uint64_t exponent, uint64_t modulus)
+{
+    return rsa_encrypt_u64_baseline(plaintext, exponent, modulus);
+}
