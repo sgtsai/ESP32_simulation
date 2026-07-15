@@ -5,6 +5,7 @@ set(RSA_SOURCES
 )
 set(RSA_REQUIRES
     esp_timer
+    mbedtls
 )
 
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/rsa_private.cmake")

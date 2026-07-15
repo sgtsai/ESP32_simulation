@@ -140,17 +140,21 @@ speedup = baseline_total_us / student_total_us
 Then compute speed points:
 
 ```text
-speed_points = min(40, max(0, 20 * (speedup - 1)))
+speed_points = min(40, max(0, 8 * (speedup - 1)))
 ```
 
 Examples:
 
 - same speed as baseline: `speedup = 1.0`, speed score = 0
-- 2x faster than baseline: `speedup = 2.0`, speed score = 20
-- 3x faster than baseline: `speedup = 3.0`, speed score = 40
+- 2x faster than baseline: `speedup = 2.0`, speed score = 8
+- 3x faster than baseline: `speedup = 3.0`, speed score = 16
+- 6x faster than baseline: `speedup = 6.0`, speed score = 40
 - slower than baseline: speed score = 0
 
 If any correctness test fails, the speed score is 0.
+
+A submission needs all correctness points and at least 6x speedup to receive
+100 total points.
 
 ## Suggested Report
 

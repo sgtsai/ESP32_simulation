@@ -131,7 +131,7 @@ static int32_t compute_speed_points_x100(bool correct, int64_t baseline_us, int6
     }
 
     const int64_t saved_us = baseline_us - student_us;
-    int64_t points_x100 = (2000LL * saved_us + (student_us / 2)) / student_us;
+    int64_t points_x100 = (800LL * saved_us + (student_us / 2)) / student_us;
     if (points_x100 > 4000) {
         points_x100 = 4000;
     }
