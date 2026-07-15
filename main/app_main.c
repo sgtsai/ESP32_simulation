@@ -29,42 +29,45 @@ static bool run_correctness_tests(void)
 #ifdef RSA_ENABLE_REFANS
         const uint64_t got_refans = rsa_encrypt_u64_refans(v->plaintext, v->exponent, v->modulus);
 #endif
-        uint64_t got_hw = 0;
-        const int hw_ret = rsa_encrypt_u64_hw(v->plaintext, v->exponent, v->modulus, &got_hw);
         const bool pass = (got_baseline == v->expected) &&
                           (got_student == v->expected) &&
 #ifdef RSA_ENABLE_REFANS
                           (got_refans == v->expected) &&
 #endif
-                          (hw_ret == 0) &&
-                          (got_hw == v->expected);
+                          true;
 
 #ifdef RSA_ENABLE_REFANS
         printf("TEST %u: baseline=%" PRIu64 " student=%" PRIu64
-               " refans=%" PRIu64 " hw=%" PRIu64
-               " expected=%" PRIu64 " hw_ret=%d %s\n",
+               " refans=%" PRIu64 " expected=%" PRIu64 " %s\n",
                (unsigned)i,
                got_baseline,
                got_student,
                got_refans,
-               got_hw,
                v->expected,
-               hw_ret,
                pass ? "PASS" : "FAIL");
 #else
         printf("TEST %u: baseline=%" PRIu64 " student=%" PRIu64
-               " hw=%" PRIu64 " expected=%" PRIu64 " hw_ret=%d %s\n",
+               " expected=%" PRIu64 " %s\n",
                (unsigned)i,
                got_baseline,
                got_student,
-               got_hw,
                v->expected,
-               hw_ret,
                pass ? "PASS" : "FAIL");
 #endif
 
         ok = ok && pass;
     }
+
+#ifdef RSA_ENABLE_REFANS
+    uint32_t big_checksum = 0;
+    const int big_ret = rsa_extended_selftest(&big_checksum);
+    printf("EXTENDED_TEST checksum=%u expected=%u ret=%d %s\n",
+           (unsigned)big_checksum,
+           (unsigned)1323555377U,
+           big_ret,
+           big_ret == 0 ? "PASS" : "FAIL");
+    ok = ok && (big_ret == 0);
+#endif
 
     return ok;
 }
@@ -121,37 +124,74 @@ static uint64_t run_student_benchmark(int64_t *elapsed_us_out)
     return checksum;
 }
 
-static uint64_t run_hardware_benchmark(int64_t *elapsed_us_out)
+static int32_t compute_speed_points_x100(bool correct, int64_t baseline_us, int64_t student_us)
 {
-    uint64_t checksum = 0;
-    const int rounds = 200;
-    const size_t count = sizeof(k_vectors) / sizeof(k_vectors[0]);
-    const int64_t start_us = esp_timer_get_time();
-
-    for (int round = 0; round < rounds; ++round) {
-        for (size_t i = 0; i < count; ++i) {
-            const rsa_test_vector_t *v = &k_vectors[i];
-            uint64_t ciphertext = 0;
-            if (rsa_encrypt_u64_hw(v->plaintext + (uint64_t)round,
-                                   v->exponent,
-                                   v->modulus,
-                                   &ciphertext) == 0) {
-                checksum ^= ciphertext;
-            }
-        }
+    if (!correct || baseline_us <= 0 || student_us <= 0 || student_us >= baseline_us) {
+        return 0;
     }
 
-    *elapsed_us_out = esp_timer_get_time() - start_us;
-    printf("BENCH_HW rounds=%d vectors=%u elapsed_us=%" PRId64 " checksum=%" PRIu64 "\n",
-           rounds,
-           (unsigned)count,
+    const int64_t saved_us = baseline_us - student_us;
+    int64_t points_x100 = (2000LL * saved_us + (student_us / 2)) / student_us;
+    if (points_x100 > 4000) {
+        points_x100 = 4000;
+    }
+
+    return (int32_t)points_x100;
+}
+
+static int64_t compute_speedup_x100(int64_t baseline_us, int64_t student_us)
+{
+    if (baseline_us <= 0 || student_us <= 0) {
+        return 0;
+    }
+
+    return (100LL * baseline_us + (student_us / 2)) / student_us;
+}
+
+static void print_score(bool correct, int64_t baseline_us, int64_t student_us)
+{
+    const int32_t correctness_points = correct ? 60 : 0;
+    const int32_t speed_points_x100 = compute_speed_points_x100(correct, baseline_us, student_us);
+    const int32_t total_points_x100 = correctness_points * 100 + speed_points_x100;
+    const int64_t speedup_x100 = compute_speedup_x100(baseline_us, student_us);
+    const int32_t speed_points_whole = speed_points_x100 / 100;
+    const int32_t speed_points_fraction = speed_points_x100 % 100;
+    const int32_t total_points_whole = total_points_x100 / 100;
+    const int32_t total_points_fraction = total_points_x100 % 100;
+
+    printf("SCORE correctness_points=%" PRId32
+           " speed_points=%" PRId32 ".%02" PRId32
+           " total_points=%" PRId32 ".%02" PRId32
+           " speedup=%" PRId64 ".%02" PRId64
+           " baseline_total_us=%" PRId64 " student_total_us=%" PRId64 "\n",
+           correctness_points,
+           speed_points_whole,
+           speed_points_fraction,
+           total_points_whole,
+           total_points_fraction,
+           speedup_x100 / 100,
+           speedup_x100 % 100,
+           baseline_us,
+           student_us);
+}
+
+#ifdef RSA_ENABLE_REFANS
+static uint32_t run_extended_benchmark(int64_t *elapsed_us_out)
+{
+    uint32_t checksum = 0;
+    const uint32_t rounds = 20;
+    const int ret = rsa_extended_benchmark(rounds, elapsed_us_out, &checksum);
+
+    printf("BENCH_EXTENDED rounds=%u elapsed_us=%" PRId64
+           " checksum=%u ret=%d\n",
+           (unsigned)rounds,
            *elapsed_us_out,
-           checksum);
+           (unsigned)checksum,
+           ret);
 
     return checksum;
 }
 
-#ifdef RSA_ENABLE_REFANS
 static uint64_t run_refans_benchmark(int64_t *elapsed_us_out)
 {
     uint64_t checksum = 0;
@@ -181,46 +221,50 @@ static uint64_t run_refans_benchmark(int64_t *elapsed_us_out)
 
 void app_main(void)
 {
-    printf("ESP32 RSA hardware-accelerated optimization assignment\n");
+    printf("ESP32 RSA optimization assignment\n");
 
     const bool ok = run_correctness_tests();
     int64_t baseline_elapsed_us = 0;
     int64_t student_elapsed_us = 0;
-    int64_t hw_elapsed_us = 0;
 #ifdef RSA_ENABLE_REFANS
     int64_t refans_elapsed_us = 0;
+    int64_t extended_elapsed_us = 0;
 #endif
     const uint64_t baseline_checksum = run_baseline_benchmark(&baseline_elapsed_us);
     const uint64_t student_checksum = run_student_benchmark(&student_elapsed_us);
+    const bool checksum_ok = (baseline_checksum == student_checksum);
+    const bool score_correct = ok && checksum_ok;
 #ifdef RSA_ENABLE_REFANS
     const uint64_t refans_checksum = run_refans_benchmark(&refans_elapsed_us);
+    const uint32_t extended_checksum = run_extended_benchmark(&extended_elapsed_us);
 #endif
-    const uint64_t hw_checksum = run_hardware_benchmark(&hw_elapsed_us);
 
 #ifdef RSA_ENABLE_REFANS
     printf("RESULT correctness=%s baseline_us=%" PRId64 " student_us=%" PRId64
-           " refans_us=%" PRId64 " hw_us=%" PRId64
+           " refans_us=%" PRId64 " extended_us=%" PRId64
            " baseline_checksum=%" PRIu64 " student_checksum=%" PRIu64
-           " refans_checksum=%" PRIu64 " hw_checksum=%" PRIu64 "\n",
-           ok ? "PASS" : "FAIL",
+           " checksum_match=%s refans_checksum=%" PRIu64 " extended_checksum=%u\n",
+           score_correct ? "PASS" : "FAIL",
            baseline_elapsed_us,
            student_elapsed_us,
            refans_elapsed_us,
-           hw_elapsed_us,
+           extended_elapsed_us,
            baseline_checksum,
            student_checksum,
+           checksum_ok ? "PASS" : "FAIL",
            refans_checksum,
-           hw_checksum);
+           (unsigned)extended_checksum);
 #else
     printf("RESULT correctness=%s baseline_us=%" PRId64 " student_us=%" PRId64
-           " hw_us=%" PRId64 " baseline_checksum=%" PRIu64
-           " student_checksum=%" PRIu64 " hw_checksum=%" PRIu64 "\n",
-           ok ? "PASS" : "FAIL",
+           " baseline_checksum=%" PRIu64 " student_checksum=%" PRIu64
+           " checksum_match=%s\n",
+           score_correct ? "PASS" : "FAIL",
            baseline_elapsed_us,
            student_elapsed_us,
-           hw_elapsed_us,
            baseline_checksum,
            student_checksum,
-           hw_checksum);
+           checksum_ok ? "PASS" : "FAIL");
 #endif
+
+    print_score(score_correct, baseline_elapsed_us, student_elapsed_us);
 }

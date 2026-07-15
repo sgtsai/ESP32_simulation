@@ -11,3 +11,5 @@ __pycache__/
 *.log
 instructor_commands.txt
 main/rsa_refans.c
+main/rsa_refans.c.example
+main/rsa_private.cmake
