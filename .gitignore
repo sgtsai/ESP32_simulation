@@ -1,5 +1,6 @@
 build/
 managed_components/
+Dockerfile
 sdkconfig
 sdkconfig.old
 dependencies.lock
