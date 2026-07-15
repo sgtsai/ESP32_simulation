@@ -92,7 +92,6 @@ public answers.
 .
 |-- CMakeLists.txt
 |-- Dockerfile
-|-- ESP32_RSA_Assignment_Guide.txt
 |-- main/
 |   |-- CMakeLists.txt
 |   |-- app_main.c

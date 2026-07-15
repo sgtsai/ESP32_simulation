@@ -1,6 +1,7 @@
 build/
 managed_components/
 Dockerfile
+ESP32_RSA_Assignment_Guide.txt
 sdkconfig
 sdkconfig.old
 dependencies.lock
